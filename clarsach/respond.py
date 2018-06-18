@@ -252,6 +252,141 @@ class RMF(object):
 
         return counts[:self.detchans]
 
+    def get_dense_matrix(self):
+        """
+        Extract the redistribution matrix as a dense numpy matrix
+
+        The redistribution matrix is saved as a 1-dimensional
+        vector to save space (see apply_rmf for more information). 
+        This function converts it into a dense array.
+
+        Returns
+        -------
+        dense_matrix : numpy.ndarray
+            The RMF as a dense 2d matrix.
+
+        """
+        # get the number of channels in the data
+        nchannels = len(self.energ_lo)
+        nenergies = self.detchans
+
+        # an empty array for the output counts
+        dense_matrix = np.zeros((nchannels, nenergies))
+
+        # index for n_chan and f_chan incrementation
+        k = 0
+
+        # index for the response matrix incrementation
+        resp_idx = 0
+
+        # loop over all channels
+        for i in range(nchannels):
+            # get the current number of groups
+            current_num_groups = self.n_grp[i]
+
+            # loop over the current number of groups
+            for j in range(current_num_groups):
+
+                current_num_chans = int(self.n_chan[k])
+
+                if current_num_chans == 0:
+                    k += 1
+                    resp_idx += current_num_chans
+                    continue
+
+                else:
+                    # get the right index for the start of the counts array
+                    # to put the data into
+                    counts_idx = int(self.f_chan[k] - self.offset)
+                    # this is the current number of channels to use
+
+                    k += 1
+                    
+                    # assign the subarray of the counts array that starts with
+                    # counts_idx and runs over current_num_chans channels
+                    
+                    dense_matrix[i,counts_idx:counts_idx + current_num_chans] = \
+                           self.matrix[resp_idx:resp_idx + current_num_chans]
+                    
+                    # iterate the response index for next round
+                    resp_idx += current_num_chans
+
+        return dense_matrix
+        
+    def get_sparse_matrix(self):
+        """
+        Extract the redistribution matrix as a sparse matrix
+
+        The redistribution matrix is saved as a 1-dimensional
+        vector to save space (see apply_rmf for more information). 
+        This function converts it into a dense array.
+
+        Returns
+        -------
+        sparse_matrix : numpy.ndarray
+            The RMF as a sparse 2d matrix.
+
+        """
+        # it's kind of stupid, but this is faster than going through a LIL
+        dense_matrix = self.get_dense_matrix()
+        
+        import scipy.sparse
+        sparse_matrix = scipy.sparse.csr_matrix(dense_matrix)
+        
+        return sparse_matrix
+        
+    def get_sparse_lil_matrix(self):
+        # get the number of channels in the data
+        nchannels = self.detchans
+        nenergies = len(self.energ_lo)
+
+        # an empty array for the output counts
+        # to avoid a scipy dependency, we import here
+        import scipy.sparse
+        sparse_matrix = scipy.sparse.lil_matrix((nenergies, nchannels))
+
+        # index for n_chan and f_chan incrementation
+        k = 0
+
+        # index for the response matrix incrementation
+        resp_idx = 0
+
+        # loop over all channels
+        for i in range(nchannels):
+            # get the current number of groups
+            current_num_groups = self.n_grp[i]
+            print('filling channel', i, 'of', nchannels)
+
+            # loop over the current number of groups
+            for j in range(current_num_groups):
+
+                current_num_chans = int(self.n_chan[k])
+
+                if current_num_chans == 0:
+                    k += 1
+                    resp_idx += current_num_chans
+                    continue
+
+                else:
+                    # get the right index for the start of the counts array
+                    # to put the data into
+                    counts_idx = int(self.f_chan[k] - self.offset)
+                    # this is the current number of channels to use
+
+                    k += 1
+                    
+                    # assign the subarray of the counts array that starts with
+                    # counts_idx and runs over current_num_chans channels
+                    
+                    sparse_matrix[i,counts_idx:counts_idx + current_num_chans] = \
+                           self.matrix[resp_idx:resp_idx + current_num_chans]
+                    
+                    # iterate the response index for next round
+                    resp_idx += current_num_chans
+
+        return sparse_matrix
+        
+
 
 class ARF(object):
 
