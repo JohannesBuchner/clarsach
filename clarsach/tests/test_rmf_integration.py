@@ -38,6 +38,15 @@ class TestChandraACISIntegration(object):
 
         assert np.allclose(self.sherpa_rmf, m_rmf_c)
 
+    def test_clarsach_rmf_with_matrix(self):
+        arf_c = ARF(self.arffile)
+        rmf_c = RMF(self.rmffile)
+
+        m_arf_c = arf_c.specresp * self.m * self.exposure
+        m_rmf_c = numpy.dot(m_arf_c, rmf_c.get_dense_matrix())
+
+        assert np.allclose(self.sherpa_rmf, m_rmf_c)
+
 class TestChandraHETGIntegration(object):
 
     @classmethod
