@@ -64,6 +64,11 @@ class RMF(object):
 
         elif "SPECRESP MATRIX" in extnames:
             h = hdulist["SPECRESP MATRIX"]
+        elif "SPECRESP" in extnames:
+            h = hdulist["SPECRESP"]
+        else:
+            assert False, (extnames, "does not contain MATRIX or SPECRESP")
+        
 
         data = h.data
         hdr = h.header
