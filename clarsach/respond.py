@@ -1,3 +1,6 @@
+# from https://github.com/dhuppenkothen/clarsach/blob/master/clarsach/respond.py
+# GPL licenced code from the Clàrsach project
+
 # Contains functionality for responses
 
 import numpy as np
@@ -118,7 +121,7 @@ class RMF(object):
         tlmin_idx = np.hstack(np.where(t))[0]
 
         # get the corresponding value
-        tlmin = np.int(list(hdr.items())[tlmin_idx][1])
+        tlmin = int(list(hdr.items())[tlmin_idx][1])
 
         return tlmin
 
@@ -131,7 +134,7 @@ class RMF(object):
         nz_idx = (n_grp > 0)
 
         # stack all non-zero rows in the matrix
-        matrix_flat = np.hstack(matrix[nz_idx])
+        matrix_flat = np.hstack(matrix[nz_idx], dtype=float)
 
         # stack all nonzero rows in n_chan and f_chan
         #n_chan_flat = np.hstack(n_chan[nz_idx])
@@ -149,11 +152,11 @@ class RMF(object):
                 f = f_chan[i]
                 nc = n_chan[i]
                 if np.size(f) == 1:
-                    f_chan_new.append(f)
-                    n_chan_new.append(nc)
+                    f_chan_new.append(f.astype(np.int64) - self.offset)
+                    n_chan_new.append(nc.astype(np.int64))
                 else:
-                    f_chan_new.append(f[:n])
-                    n_chan_new.append(nc[:n])
+                    f_chan_new.append(f[:n].astype(np.int64) - self.offset)
+                    n_chan_new.append(nc[:n].astype(np.int64))
 
         n_chan_flat = np.hstack(n_chan_new)
         f_chan_flat = np.hstack(f_chan_new)
@@ -228,34 +231,94 @@ class RMF(object):
             current_num_groups = self.n_grp[i]
 
             # loop over the current number of groups
-            for j in range(current_num_groups):
-
-                current_num_chans = int(self.n_chan[k])
-
-                if current_num_chans == 0:
-                    k += 1
-                    resp_idx += current_num_chans
-                    continue
-
-
-                else:
-                    # get the right index for the start of the counts array
-                    # to put the data into
-                    counts_idx = int(self.f_chan[k] - self.offset)
-                    # this is the current number of channels to use
-
-                    k += 1
-                    # add the flux to the subarray of the counts array that starts with
-                    # counts_idx and runs over current_num_chans channels
-                    counts[counts_idx:counts_idx +
-                                      current_num_chans] += self.matrix[resp_idx:resp_idx +
-                                                                                 current_num_chans] * \
-                                                                np.float(source_bin_i)
-                    # iterate the response index for next round
-                    resp_idx += current_num_chans
+            for current_num_chans, counts_idx in zip(self.n_chan[k:k+current_num_groups], self.f_chan[k:k+current_num_groups]):
+                # add the flux to the subarray of the counts array that starts with
+                # counts_idx and runs over current_num_chans channels
+                counts[counts_idx:counts_idx +
+                                  current_num_chans] += self.matrix[resp_idx:resp_idx +
+                                                                             current_num_chans] * \
+                                                            source_bin_i
+                # iterate the response index for next round
+                resp_idx += current_num_chans
+            k += current_num_groups
 
 
         return counts[:self.detchans]
+
+    def apply_rmf_vectorized(self, specs):
+        """
+        Fold the spectrum through the redistribution matrix.
+
+        The redistribution matrix is saved as a flattened 1-dimensional
+        vector to save space. In reality, for each entry in the flux
+        vector, there exists one or more sets of channels that this
+        flux is redistributed into. The additional arrays `n_grp`,
+        `f_chan` and `n_chan` store this information:
+            * `n_group` stores the number of channel groups for each
+              energy bin
+            * `f_chan` stores the *first channel* that each channel
+              for each channel set
+            * `n_chan` stores the number of channels in each channel
+              set
+
+        As a result, for a given energy bin i, we need to look up the
+        number of channel sets in `n_grp` for that energy bin. We
+        then need to loop over the number of channel sets. For each
+        channel set, we look up the first channel into which flux
+        will be distributed as well as the number of channels in the
+        group. We then need to also loop over the these channels and
+        actually use the corresponding elements in the redistribution
+        matrix to redistribute the photon flux into channels.
+
+        All of this is basically a big bookkeeping exercise in making
+        sure to get the indices right.
+
+        Parameters
+        ----------
+        specs : numpy.ndarray
+            The (model) spectra to be folded
+
+        Returns
+        -------
+        counts : numpy.ndarray
+            The (model) spectrum after folding, in counts/s/channel
+
+        """
+        # get the number of channels in the data
+        nspecs, nchannels = specs.shape
+
+        # an empty array for the output counts
+        counts = np.zeros((nspecs, nchannels))
+
+        # index for n_chan and f_chan incrementation
+        k = 0
+
+        # index for the response matrix incrementation
+        resp_idx = 0
+
+        # loop over all channels
+        for i in range(nchannels):
+
+            # this is the current bin in the flux spectrum to
+            # be folded
+            source_bin_i = specs[:,i]
+
+            # get the current number of groups
+            current_num_groups = self.n_grp[i]
+
+            # loop over the current number of groups
+            for current_num_chans, counts_idx in zip(self.n_chan[k:k+current_num_groups], self.f_chan[k:k+current_num_groups]):
+                # add the flux to the subarray of the counts array that starts with
+                # counts_idx and runs over current_num_chans channels
+                to_add = np.outer(source_bin_i, self.matrix[resp_idx:resp_idx + current_num_chans])
+                counts[:,counts_idx:counts_idx + current_num_chans] += to_add
+
+                # iterate the response index for next round
+                resp_idx += current_num_chans
+            k += current_num_groups
+
+
+        return counts[:,:self.detchans]
 
     def get_dense_matrix(self):
         """
@@ -291,30 +354,22 @@ class RMF(object):
 
             # loop over the current number of groups
             for j in range(current_num_groups):
-
                 current_num_chans = int(self.n_chan[k])
+                # get the right index for the start of the counts array
+                # to put the data into
+                counts_idx = self.f_chan[k]
+                # this is the current number of channels to use
 
-                if current_num_chans == 0:
-                    k += 1
-                    resp_idx += current_num_chans
-                    continue
-
-                else:
-                    # get the right index for the start of the counts array
-                    # to put the data into
-                    counts_idx = int(self.f_chan[k] - self.offset)
-                    # this is the current number of channels to use
-
-                    k += 1
-                    
-                    # assign the subarray of the counts array that starts with
-                    # counts_idx and runs over current_num_chans channels
-                    
-                    dense_matrix[i,counts_idx:counts_idx + current_num_chans] = \
-                           self.matrix[resp_idx:resp_idx + current_num_chans]
-                    
-                    # iterate the response index for next round
-                    resp_idx += current_num_chans
+                k += 1
+                
+                # assign the subarray of the counts array that starts with
+                # counts_idx and runs over current_num_chans channels
+                
+                dense_matrix[i,counts_idx:counts_idx + current_num_chans] = \
+                       self.matrix[resp_idx:resp_idx + current_num_chans]
+                
+                # iterate the response index for next round
+                resp_idx += current_num_chans
 
         return dense_matrix
 
